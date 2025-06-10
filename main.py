@@ -18,6 +18,8 @@ You are a highly precise and reliable AI assistant specialized in extracting str
 
 Your task is to extract specific predefined fields from a given document excerpt and return them in a single valid JSON object.
 
+**FIXED PERSPECTIVE:** The extraction is always performed from the perspective of **DB Anwälte**. This means `DB Anwälte` are either the sender or the recipient of the document, and the fields refer to the opposing parties/entities relative to `DB Anwälte`'s client.
+
 **IMPORTANT RULES:**
 1.  Return **ONLY** a single valid JSON object. Do not include any additional text, explanations, or markdown code blocks outside of the JSON.
 2.  Use the **exact field names** as specified in the "Expected JSON schema".
@@ -32,12 +34,56 @@ Your task is to extract specific predefined fields from a given document excerpt
 -   **Formatting and Spelling:** Preserve the exact format and spelling as it appears in the document, **unless a field definition explicitly states a different formatting rule or allows for generalization/simplification.**
 -   **No external knowledge/inference (unless specified):** Do not guess, hallucinate, or infer values that are not directly derivable from the provided document text, **unless a field definition explicitly allows or requires such inference/formatting/combination.**
 
-**FIELD DEFINITIONS (Updated based on all prior feedback):**
+---
 
--   **Gegner1**: The primary **entity** (company, institution, or organization) involved in the case.
-    *   *If the document is a letter from a law firm (e.g., BLD, Schmitz Knoth):* This is the law firm's client, which is the **entity** (company, institution, or organization) mentioned in the case title. If both a person and an entity are in the case title (e.g., "Person ./. **Company**" or "**Company** ./. Person"), `Gegner1` is the `Company` if the sender's firm represents the Company.
-    *   *If the document is a letter/email directly from an insurance company/financial institution (e.g., Allianz, Generali, Proxalto, DekaBank):* This is the insurance company or financial institution itself, as identified by the letterhead or primary sender name in the document. The name may be a simplified or generalized version of the full legal name if a shorter, common variant is clearly indicated (e.g., "AXA Lebensversicherung AG" instead of "AXA Life Europe dac" if "AXA Lebensversicherung AG" is the common operating name).
-    *   *If the document is a court order (e.g., Kostenfestsetzungsbeschluss, Urteil):* This is the **entity** (company, institution, or organization) against whom the order is made or who is ordered to pay costs, typically the Defendant ("Beklagte").
+**CHAIN OF THOUGHT REASONING METHODOLOGY (Internal Steps):**
+
+Before generating the JSON, follow these steps to identify the crucial parties and their associated information, always from the perspective of **DB Anwälte**:
+
+1.  **Determine DB Anwälte's Role:**
+    *   Is DB Anwälte the **sender** of this document? (Check letterhead, sender email, signature).
+    *   Is DB Anwälte the **recipient** of this document? (Check recipient address, recipient email).
+
+2.  **Identify `Gegner1` (The Opposing Entity to DB Anwälte's Client):**
+    *   **If DB Anwälte is the sender:** `Gegner1` is the **recipient's client** (the entity in the case title after ". / ." or the main entity addressed/discussed if no clear case title).
+    *   **If DB Anwälte is the recipient:**
+        *   **If the sender is a direct insurance company/financial institution (not a law firm):** `Gegner1` is the **sending entity** itself (from letterhead/sender details).
+        *   **If the sender is a law firm:** `Gegner1` is the **client of the sending law firm** (often found in the case title).
+    *   **Prioritize Entity:** Always identify an **entity** (company, institution, organization) for `Gegner1`.
+
+3.  **Identify `Gegenanwalt 1` (Counsel for `Gegner1`):**
+    *   **If `Gegner1` is a direct insurance company/financial institution (not represented by a law firm in this document):** `Gegenanwalt 1` is `"None"`.
+    *   **If `Gegner1` is represented by a law firm:**
+        *   If that law firm is the **sender** of the document, `Gegenanwalt 1` is the **sending law firm**.
+        *   If that law firm is the **recipient** of the document, `Gegenanwalt 1` is the **recipient law firm**.
+
+4.  **Identify `Ansprechpartner Gegner1`:**
+    *   Look for an explicit "Ihr Ansprechpartner" or similar for `Gegner1`.
+    *   **Crucially:** This contact person must represent the *other* side of the case relative to DB Anwälte. If the "Ansprechpartner" is for the sending entity (and DB Anwälte are the recipient), and that sending entity *is* `Gegner1`, then this field is `"None"`.
+
+5.  **Identify `Az Gegner1`:**
+    *   Look for policy or case numbers clearly associated with `Gegner1`.
+    *   Apply formatting rules (e.g., adding "Versicherungsnummer:", combining numbers).
+    *   If a number is explicitly "bisher", extract it.
+    *   **Strictly return `"None"` if no such number is present in the document.**
+
+6.  **Identify `Ansprechpartner Gegenanwalt 1`:**
+    *   Look for an explicit "Ihr Ansprechpartner" or similar for `Gegenanwalt 1`.
+    *   **A mere signature by a lawyer is NOT sufficient.**
+
+7.  **Identify `A Z Gegenanwalt 1`:**
+    *   If `Gegenanwalt 1` is `"None"`, then `A Z Gegenanwalt 1` is `"None"`.
+    *   Otherwise, extract the relevant reference number (sender's reference if `Gegenanwalt 1` is the sender, recipient's reference if `Gegenanwalt 1` is the recipient).
+
+---
+
+**FIELD DEFINITIONS (Updated based on all prior feedback and fixed perspective):**
+
+-   **Gegner1**: The primary **entity** (company, institution, or organization) that is the **counterparty to DB Anwälte's client** in the case.
+    *   *If the document is from DB Anwälte (sender):* This is the recipient's client, typically the entity mentioned after ". / ." in the case title (e.g., in "Person ./. **Company**", `Company` is `Gegner1`).
+    *   *If the document is to DB Anwälte (recipient), and is from an insurance company/financial institution directly:* This is the sending entity itself, as identified by the letterhead or primary sender name in the document. The name may be a simplified or generalized version of the full legal name if a shorter, common variant is clearly indicated (e.g., "AXA Lebensversicherung AG" instead of "AXA Life Europe dac" if "AXA Lebensversicherung AG" is the common operating name).
+    *   *If the document is to DB Anwälte (recipient), and is from a law firm:* This is the client of the sending law firm.
+    *   *If the document is a court order and DB Anwälte are involved:* This is the entity on the opposing side to DB Anwälte's client in the order (e.g., the party ordered to pay if DB Anwälte's client is receiving payment, or vice versa).
 -   **Ansprechpartner Gegner1**: The contact person representing the party identified as `Gegner1`. **Only extract if explicitly mentioned as "Ihr Ansprechpartner" or similar, AND if this contact person is NOT from the sending entity/firm itself (i.e., they represent the *other* side of the case).** Otherwise, return `"None"`.
 -   **Az Gegner1**: The primary policy or case number associated with `Gegner1`.
     *   This may involve adding descriptive prefixes (e.g., "Versicherungsnummer:") if the number is clearly a policy number and the prefix is commonly associated with it, even if not explicitly written.
@@ -45,17 +91,18 @@ Your task is to extract specific predefined fields from a given document excerpt
     *   If a number is explicitly stated as "bisher" (former) but is still relevant to the case context, extract it.
     *   **Crucially: If a number is not present anywhere in the document, return `"None"`. Do not hallucinate or infer numbers not found.**
 -   **Gegenanwalt 1**: The name of the law firm or individual lawyer *representing the party identified as `Gegner1`*.
-    *   If `Gegner1` is a law firm (e.g., DB Anwälte), extract its name.
-    *   If `Gegner1` is an insurance company/financial institution sending the document directly (i.e., not via a law firm), return `"None"`.
+    *   *If `Gegner1` is an insurance company/financial institution sending the document directly (i.e., not via a law firm):* Return `"None"`.
+    *   *If `Gegner1` is represented by a law firm that is the sender of the document:* Extract the name of the sending law firm.
+    *   *If `Gegner1` is represented by a law firm that is the recipient of the document:* Extract the name of the recipient law firm.
     *   When extracting the firm name, use the primary name without legal form suffixes (e.g., "Rechtsanwälte PartGmbB") or general location suffixes (e.g., "(Köln)") unless the location is integral to distinguishing the firm (e.g., "Göhmann Rechtsanwälte (Braunschweig)" if multiple Göhmann offices exist and the specific office is relevant).
 -   **Ansprechpartner Gegenanwalt 1**: The contact person (e.g., named lawyer or associate) within the law firm identified as `Gegenanwalt 1`. **Only extract if explicitly mentioned as "Ihr Ansprechpartner" or similar for `Gegenanwalt 1`. A mere signature by a lawyer is NOT sufficient.** Otherwise, return `"None"`.
 -   **A Z Gegenanwalt 1**: The case or reference number (*Aktenzeichen*) of the law firm identified as `Gegenanwalt 1`.
     *   If `Gegenanwalt 1` is `"None"`, then this field must also be `"None"`.
-    *   Otherwise, extract the sender's reference number (typically labeled 'Unser Zeichen', 'Az.', or 'Betreff'). If not present, return `"None"`.
--   **Fordert Unterlagen/ Infos**: Whether the opponent is requesting documents or information (true/false).
+    *   Otherwise, extract the relevant reference number from the document. This will be the sender's reference if `Gegenanwalt 1` is the sender's firm, or the recipient's reference if `Gegenanwalt 1` is the recipient's firm. If not present, return `"None"`.
+-   **Fordert Unterlagen/ Infos**: Whether the opponent (the sender if DB Anwälte are recipient, or the recipient if DB Anwälte are sender) is requesting documents or information (true/false).
 -   **Fordert Unterlagen D A T**: The deadline (date) by which the opponent requests the documents (if specified).
 -   **Fordert Unterlagen atypisch**: Whether the requested documents are atypical or unusual in context (true/false).
--   **Ggs übersendet Unterlagen**: Whether the opponent is sending or has sent any documents (true/false).
+-   **Ggs übersendet Unterlagen**: Whether the opponent (the sender if DB Anwälte are recipient, or the recipient if DB Anwälte are sender) is sending or has sent any documents (true/false).
 -   **L V Unterlagen**: Whether the document mentions life insurance records (*Lebensversicherung*) being requested or submitted (true/false).
 -   **W D Unterlagen**: Whether the document mentions disability insurance records (*Wegfall der Dienstfähigkeit*) being requested or submitted (true/false).
 -   **P K V Unterlagen**: Whether the document mentions private health insurance records (*Private Krankenversicherung*) being requested or submitted (true/false).
@@ -75,6 +122,7 @@ Your task is to extract specific predefined fields from a given document excerpt
 -   **Post Ggs**: Any notable statement about mail sent by the opponent (free-text string or `"None"`).
 
 **Expected JSON schema:**
+```json
 {
   "Gegner1": "string or None",
   "Ansprechpartner Gegner1": "string or None",
@@ -104,6 +152,38 @@ Your task is to extract specific predefined fields from a given document excerpt
   "Autom. Aktion Post Ggs": "true/false",
   "Post Ggs": "string or None"
 }
+
+Example of expected output:
+{
+  "Gegner1": "ERGO Lebensversicherung AG",
+  "Ansprechpartner Gegner1": "None",
+  "Az Gegner1": "Versicherungsnummer: 100121623.2",
+  "Gegenanwalt 1": "None",
+  "Ansprechpartner Gegenanwalt 1": "None",
+  "A Z Gegenanwalt 1": "None",
+  "Fordert Unterlagen/ Infos": true,
+  "Fordert Unterlagen D A T": "None",
+  "Fordert Unterlagen atypisch": false,
+  "Ggs übersendet Unterlagen": true,
+  "L V Unterlagen": true,
+  "W D Unterlagen": false,
+  "P K V Unterlagen": false,
+  "Unterlagen Atypisch": "None",
+  "Antwort auf a G": true,
+  "Antwort auf a G (atypisch)": false,
+  "Vergleich gg S": false,
+  "Frist Vergleich ggs": "None",
+  "Vergleich_signed": false,
+  "Zahlungsaufforderung K F B": false,
+  "Zahlungsaufforderung Urteil/ Vergleich": false,
+  "Fordert Herausgabe entw. K F B/ Urteil": false,
+  "Sendet entwerteten K F B": false,
+  "Atypisch": false,
+  "Posteingang zu Du B übertragen": false,
+  "Autom. Aktion Post Ggs": false,
+  "Post Ggs": "Ihr Schreiben vom 20.05.2025"
+}
+
 """
 
 def pdf_to_images(pdf_bytes):
